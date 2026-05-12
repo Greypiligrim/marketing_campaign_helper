@@ -1,0 +1,10 @@
+.venv
+venv
+__pycache__
+*.pyc
+.git
+.gitignore
+.env
+*.db
+README.md
+main_telegram_legacy.py

@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Маркетинговый сервис</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #f0f2f5; color: #1a1a1a; }
+  header { padding: 12px 18px; background: #2563eb; color: #fff; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  header .user { font-weight: 400; font-size: 14px; }
+  header .user a { color: #fff; text-decoration: underline; cursor: pointer; margin-left: 8px; }
+  .main { display: flex; height: calc(100vh - 49px); }
+  .chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #log { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 82%; padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; line-height: 1.4; word-wrap: break-word; }
+  .user { align-self: flex-end; background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
+  .bot { align-self: flex-start; background: #fff; border: 1px solid #e2e2e2; border-bottom-left-radius: 4px; }
+  .sys { align-self: center; color: #888; font-size: 13px; }
+  form.chat { display: flex; gap: 8px; padding: 11px; background: #fff; border-top: 1px solid #e2e2e2; }
+  form.chat input { flex: 1; padding: 10px 14px; border: 1px solid #ccc; border-radius: 10px; font-size: 15px; }
+  form.chat input:focus { outline: none; border-color: #2563eb; }
+  button { border: none; border-radius: 8px; padding: 8px 13px; font-size: 14px; cursor: pointer; background: #2563eb; color: #fff; }
+  button.ghost { background: #e5e7eb; color: #333; }
+  button.tiny { padding: 3px 8px; font-size: 12px; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  aside.side { width: 340px; background: #f7f8fa; border-left: 1px solid #e2e2e2; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 14px; }
+  .section { background: #fff; border: 1px solid #e6e6e6; border-radius: 12px; padding: 10px 12px; }
+  .section > .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .section h3 { margin: 0; font-size: 14px; }
+  .empty { color: #999; font-size: 13px; }
+
+  .ccard { border: 1px solid #e6e6e6; border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+  .ccard:last-child { margin-bottom: 0; }
+  .ccard .title { display: flex; justify-content: space-between; align-items: center; cursor: pointer; gap: 6px; }
+  .ccard .title b { font-size: 14px; }
+  .ccard .meta { font-size: 12px; color: #666; margin-top: 3px; }
+  .ccard .tag { display: inline-block; background: #eef2ff; color: #4338ca; border-radius: 6px; padding: 1px 6px; font-size: 11px; margin-left: 4px; }
+  table.sub { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+  table.sub th, table.sub td { text-align: left; padding: 4px 5px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+  table.sub th { color: #888; font-weight: 600; }
+  tr.overdue td { background: #fff4f4; }
+  tr.due td { background: #fffbe6; }
+
+  .tcard { border: 1px solid #e6e6e6; border-radius: 10px; padding: 7px 10px; margin-bottom: 7px; font-size: 13px; }
+  .tcard:last-child { margin-bottom: 0; }
+  .tcard .trow { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .tcard .tname { font-weight: 600; }
+  .tcard .tmeta { font-size: 12px; color: #666; }
+  .tcard .tacts { display: flex; gap: 4px; flex-shrink: 0; }
+  .tcard .tacts button { padding: 2px 6px; font-size: 12px; line-height: 1.2; }
+  .tcard .tacts .del { background: #fee2e2; color: #b91c1c; }
+  .urole { font-size: 11px; color: #888; margin-left: 6px; }
+  .urole.none { font-style: italic; }
+
+  .todo { font-size: 13px; padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
+  .todo:last-child { border-bottom: none; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .overlay.hidden { display: none; }
+  .dialog { background: #fff; border-radius: 14px; padding: 20px; width: 460px; max-width: 92vw; max-height: 90vh; overflow-y: auto; }
+  .dialog h2 { margin: 0 0 14px; font-size: 18px; }
+  .dialog label { display: block; font-size: 13px; color: #555; margin: 9px 0 3px; }
+  .dialog input, .dialog select, .dialog textarea { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 14px; font-family: inherit; }
+  .dialog .row { display: flex; gap: 8px; }
+  .dialog .row > * { flex: 1; }
+  .subrow { display: grid; grid-template-columns: 2fr 1.4fr 0.8fr 0.8fr auto; gap: 6px; margin-top: 6px; align-items: center; }
+  .subrow input { padding: 6px 7px; font-size: 13px; }
+  .subrow .x { background: #fee2e2; color: #b91c1c; }
+  .dialog .actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px; }
+  .err { color: #b91c1c; font-size: 13px; margin-top: 8px; }
+
+  @media (max-width: 760px) {
+    .main { flex-direction: column; height: auto; }
+    aside.side { width: auto; border-left: none; border-top: 1px solid #e2e2e2; }
+    #log { height: 50vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span>📣 Маркетинговый сервис</span>
+  <span class="user"><span id="who">не представлен</span><a onclick="openLogin()">сменить</a></span>
+</header>
+
+<div class="main">
+  <div class="chat-col">
+    <div id="log"></div>
+    <form class="chat" id="f">
+      <input type="text" id="inp" placeholder="Опишите кампанию или задайте вопрос…" autocomplete="off">
+      <button type="submit">Отправить</button>
+    </form>
+  </div>
+  <aside class="side">
+    <div class="section">
+      <div class="head"><h3>⏰ Дедлайны сегодня</h3><button class="tiny ghost" onclick="loadToday()">⟳</button></div>
+      <div id="today"><span class="empty">…</span></div>
+    </div>
+    <div class="section">
+      <div class="head"><h3>👥 Участники чата</h3><button class="tiny ghost" onclick="loadUsers()">⟳</button></div>
+      <div id="users"><span class="empty">…</span></div>
+    </div>
+    <div class="section">
+      <div class="head"><h3>📣 Кампании</h3><button class="tiny ghost" onclick="loadCampaigns()">⟳</button></div>
+      <div id="campaigns"><span class="empty">…</span></div>
+    </div>
+    <div class="section">
+      <div class="head"><h3>📌 Шаблоны</h3><button class="tiny" onclick="openTemplateForm()">＋ добавить</button></div>
+      <div id="templates"><span class="empty">…</span></div>
+    </div>
+  </aside>
+</div>
+
+<!-- Логин -->
+<div class="overlay hidden" id="loginOverlay">
+  <div class="dialog">
+    <h2>Представьтесь</h2>
+    <label>Имя</label>
+    <input type="text" id="loginName" placeholder="Например, Иван">
+    <label>Роль</label>
+    <select id="loginRole">
+      <option>Маркетолог</option>
+      <option>Таргетолог</option>
+      <option>Дизайнер</option>
+      <option>Контент-менеджер</option>
+      <option>Менеджер проекта</option>
+      <option>Аналитик</option>
+      <option value="__other__">Другое…</option>
+    </select>
+    <input type="text" id="loginRoleOther" placeholder="Укажите роль" style="display:none;margin-top:6px;">
+    <div class="err" id="loginErr" style="display:none;"></div>
+    <div class="actions">
+      <button onclick="saveLogin()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Форма шаблона -->
+<div class="overlay hidden" id="tplOverlay">
+  <div class="dialog">
+    <h2 id="tplTitle">Новый шаблон кампании</h2>
+    <label>Название</label>
+    <input type="text" id="tplName" placeholder="Например, Email-рассылка">
+    <label>Описание</label>
+    <input type="text" id="tplDesc" placeholder="Коротко о шаблоне">
+    <div class="row">
+      <div><label>Примерный бюджет, ₽</label><input type="number" id="tplBudget" placeholder="100000"></div>
+      <div><label>Пример участников</label><input type="text" id="tplParticipants" placeholder="Маркетолог, Дизайнер"></div>
+    </div>
+    <label>Пример дедлайна</label>
+    <input type="text" id="tplDeadline" placeholder="через 2 недели / 25.06.2026">
+    <label>Подзадачи <span style="color:#999;font-weight:400">(бюджет — % от общего, срок — доля 0–1 от дней до дедлайна)</span></label>
+    <div class="subrow" style="color:#888;font-size:12px;">
+      <span>Название</span><span>Роль</span><span>Бюджет %</span><span>Срок 0–1</span><span></span>
+    </div>
+    <div id="tplSubrows"></div>
+    <button class="tiny ghost" style="margin-top:8px;" onclick="addTplRow()">＋ подзадача</button>
+    <div class="err" id="tplErr" style="display:none;"></div>
+    <div class="actions">
+      <button class="ghost" onclick="closeTemplateForm()">Отмена</button>
+      <button onclick="saveTemplate()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const log = $('log');
+
+let USER = { name: localStorage.getItem('mk_user_name') || '', role: localStorage.getItem('mk_user_role') || '' };
+
+function renderWho() {
+  $('who').textContent = USER.name ? (USER.role ? `${USER.name} (${USER.role})` : USER.name) : 'не представлен';
+}
+
+// ---------- утилиты ----------
+function el(cls, text) {
+  const d = document.createElement('div');
+  d.className = cls;
+  if (text !== undefined) d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((data && data.detail) || ('HTTP ' + r.status));
+  return data;
+}
+function post(path, body) {
+  return api(path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+}
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function dayCls(deadline) {
+  if (!deadline) return '';
+  const t = todayISO();
+  if (deadline < t) return 'overdue';
+  if (deadline === t) return 'due';
+  return '';
+}
+
+// ---------- логин ----------
+function openLogin() {
+  $('loginName').value = USER.name;
+  const sel = $('loginRole'), other = $('loginRoleOther');
+  const known = [...sel.options].some(o => o.value === USER.role || o.text === USER.role);
+  if (USER.role && !known) { sel.value = '__other__'; other.style.display = 'block'; other.value = USER.role; }
+  else if (USER.role) { sel.value = USER.role; other.style.display = 'none'; }
+  $('loginErr').style.display = 'none';
+  $('loginOverlay').classList.remove('hidden');
+  $('loginName').focus();
+}
+$('loginRole').onchange = e => {
+  $('loginRoleOther').style.display = e.target.value === '__other__' ? 'block' : 'none';
+};
+function saveLogin() {
+  const name = $('loginName').value.trim();
+  if (!name) { $('loginErr').textContent = 'Укажите имя.'; $('loginErr').style.display = 'block'; return; }
+  let role = $('loginRole').value;
+  if (role === '__other__') role = $('loginRoleOther').value.trim() || 'Участник';
+  USER = { name, role };
+  localStorage.setItem('mk_user_name', name);
+  localStorage.setItem('mk_user_role', role);
+  renderWho();
+  $('loginOverlay').classList.add('hidden');
+  // регистрируем себя как участника чата, чтобы LLM знал «кто есть кто»
+  post('/api/users', { name, role }).then(loadUsers).catch(() => {});
+}
+
+// ---------- чат ----------
+// id ожидающей кампании, для которой бот попросил уточнения; пока он задан,
+// следующее сообщение пользователя уходит в /api/campaigns/refine, а не /api/chat.
+let pendingClarify = null;
+
+function handleChatResponse(resp) {
+  if (resp.type === 'campaign') { pendingClarify = null; renderCampaignCard(resp); }
+  else if (resp.type === 'clarify') { pendingClarify = resp.pending_id; renderClarifyCard(resp); }
+  else { pendingClarify = null; el('bot', resp.answer || ''); }
+}
+
+function previewLines(p) {
+  return `🎯 ${p.task || '—'}\n⏰ Дедлайн: ${p.deadline || 'не указан'}\n` +
+         `👥 ${(p.participants||[]).join(', ') || '—'}\n💰 ${p.budget_rub ?? '—'} ₽`;
+}
+
+function renderClarifyCard(resp) {
+  const c = document.createElement('div');
+  c.className = 'card msg bot';
+  c.style.maxWidth = '82%';
+  const p = resp.preview || {};
+  const head = document.createElement('div');
+  head.innerHTML = `<b>📝 ${escapeHtml(p.campaign_name || 'Новая кампания')}</b>`;
+  c.appendChild(head);
+  const info = document.createElement('div'); info.style.fontSize = '13px'; info.style.marginTop = '4px';
+  info.textContent = previewLines(p);
+  c.appendChild(info);
+  const q = document.createElement('div'); q.style.marginTop = '8px';
+  q.textContent = resp.answer || 'Нужны дополнительные данные.';
+  c.appendChild(q);
+  const actions = document.createElement('div'); actions.style.marginTop = '10px';
+  const no = document.createElement('button'); no.className = 'ghost'; no.textContent = '❌ Отмена';
+  no.onclick = async () => {
+    no.disabled = true;
+    if (pendingClarify === resp.pending_id) pendingClarify = null;
+    await post('/api/campaigns/cancel', { pending_id: resp.pending_id }).catch(() => {});
+    el('sys', '❌ Создание отменено.');
+  };
+  actions.appendChild(no); c.appendChild(actions);
+  log.appendChild(c); log.scrollTop = log.scrollHeight;
+}
+
+function renderCampaignCard(resp) {
+  const c = document.createElement('div');
+  c.className = 'card msg bot';
+  c.style.maxWidth = '82%';
+  const p = resp.preview;
+  const head = document.createElement('div'); head.innerHTML = `<b>📣 ${escapeHtml(p.campaign_name || 'Новая кампания')}</b>`;
+  c.appendChild(head);
+  const info = document.createElement('div'); info.style.fontSize = '13px'; info.style.marginTop = '4px';
+  info.textContent = previewLines(p);
+  c.appendChild(info);
+  const actions = document.createElement('div'); actions.style.marginTop = '10px'; actions.style.display = 'flex'; actions.style.gap = '8px';
+  const yes = document.createElement('button'); yes.textContent = '✅ Создать';
+  const no = document.createElement('button'); no.className = 'ghost'; no.textContent = '❌ Отмена';
+  actions.appendChild(yes); actions.appendChild(no); c.appendChild(actions);
+  log.appendChild(c); log.scrollTop = log.scrollHeight;
+
+  yes.onclick = async () => {
+    yes.disabled = no.disabled = true;
+    try {
+      const res = await post('/api/campaigns/confirm', { pending_id: resp.pending_id, user_name: USER.name, user_role: USER.role });
+      const cc = res.campaign;
+      el('bot',
+        `✅ Кампания «${cc.name}» создана` + (cc.template_used ? ` по шаблону «${cc.template_used}»` : '') + `.\n` +
+        `📋 Подзадач: ${cc.subtasks.length}\n` +
+        cc.subtasks.map(s => `  • ${s.name} — ${s.responsible}, ${s.budget_rub} ₽, до ${s.deadline}`).join('\n'));
+      loadCampaigns(); loadToday();
+    } catch (e) {
+      el('sys', '⚠️ ' + e.message);
+      yes.disabled = no.disabled = false;
+    }
+  };
+  no.onclick = async () => {
+    yes.disabled = no.disabled = true;
+    await post('/api/campaigns/cancel', { pending_id: resp.pending_id }).catch(() => {});
+    el('sys', '❌ Создание отменено.');
+  };
+}
+
+$('f').onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $('inp').value.trim();
+  if (!text) return;
+  el('user', text);
+  $('inp').value = '';
+  const thinking = el('sys', '…');
+  try {
+    const resp = pendingClarify
+      ? await post('/api/campaigns/refine', { pending_id: pendingClarify, message: text, user_name: USER.name, user_role: USER.role })
+      : await post('/api/chat', { message: text, user_name: USER.name, user_role: USER.role });
+    thinking.remove();
+    handleChatResponse(resp);
+  } catch (err) {
+    thinking.remove();
+    // если ожидающая кампания протухла — выходим из режима уточнения, чтобы не залипнуть
+    if (pendingClarify && /404|устарел|не найден/i.test(err.message)) pendingClarify = null;
+    el('sys', '⚠️ ' + err.message);
+  }
+};
+
+// ---------- боковая панель ----------
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+async function loadToday() {
+  const box = $('today');
+  try {
+    const list = await api('/api/reminders/today');
+    box.innerHTML = '';
+    if (!list.length) { box.innerHTML = '<span class="empty">Дедлайнов на сегодня нет.</span>'; return; }
+    list.forEach(s => {
+      const d = document.createElement('div'); d.className = 'todo';
+      d.textContent = `${s.campaign_name ? '['+s.campaign_name+'] ' : ''}${s.name} — ${s.responsible}, ${s.budget_rub} ₽`;
+      box.appendChild(d);
+    });
+  } catch (e) { box.innerHTML = `<span class="empty">⚠️ ${escapeHtml(e.message)}</span>`; }
+}
+
+async function loadCampaigns() {
+  const box = $('campaigns');
+  try {
+    const list = await api('/api/campaigns');
+    box.innerHTML = '';
+    if (!list.length) { box.innerHTML = '<span class="empty">Кампаний пока нет.</span>'; return; }
+    list.forEach(c => box.appendChild(campaignCard(c)));
+  } catch (e) { box.innerHTML = `<span class="empty">⚠️ ${escapeHtml(e.message)}</span>`; }
+}
+
+function campaignCard(c) {
+  const card = document.createElement('div'); card.className = 'ccard';
+  const title = document.createElement('div'); title.className = 'title';
+  const left = document.createElement('span');
+  left.innerHTML = `<b>${escapeHtml(c.name)}</b>` + (c.template_used ? `<span class="tag">${escapeHtml(c.template_used)}</span>` : '');
+  const del = document.createElement('button'); del.className = 'tiny ghost'; del.textContent = '✕';
+  del.title = 'Удалить кампанию';
+  del.onclick = async (ev) => {
+    ev.stopPropagation();
+    if (!confirm(`Удалить кампанию «${c.name}»?`)) return;
+    try { await api('/api/campaigns/' + encodeURIComponent(c.name), { method: 'DELETE' }); loadCampaigns(); loadToday(); }
+    catch (e) { alert('⚠️ ' + e.message); }
+  };
+  title.appendChild(left); title.appendChild(del);
+  card.appendChild(title);
+
+  const meta = document.createElement('div'); meta.className = 'meta';
+  const parts = [];
+  if (c.created_by) parts.push('👤 ' + c.created_by);
+  parts.push('⏰ ' + (c.deadline || '—'));
+  parts.push('💰 ' + c.budget_rub + ' ₽');
+  parts.push('📋 ' + c.subtasks.length + ' подзадач');
+  meta.textContent = parts.join('  ·  ');
+  card.appendChild(meta);
+
+  let table = null;
+  title.onclick = () => {
+    if (table) { table.remove(); table = null; return; }
+    table = document.createElement('table'); table.className = 'sub';
+    table.innerHTML = '<tr><th>Подзадача</th><th>Ответственный</th><th>Бюджет</th><th>Срок</th><th>Дедлайн</th></tr>';
+    c.subtasks.forEach(s => {
+      const tr = document.createElement('tr');
+      tr.className = dayCls(s.deadline);
+      [s.name, s.responsible, s.budget_rub + ' ₽', s.execution_days + ' дн.', s.deadline || '—'].forEach(v => {
+        const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+      });
+      table.appendChild(tr);
+    });
+    card.appendChild(table);
+  };
+  return card;
+}
+
+async function loadUsers() {
+  const box = $('users');
+  try {
+    const list = await api('/api/users');
+    box.innerHTML = '';
+    if (!list.length) { box.innerHTML = '<span class="empty">Пока никто не представился.</span>'; return; }
+    list.forEach(u => {
+      const d = document.createElement('div'); d.className = 'tcard';
+      const row = document.createElement('div'); row.className = 'trow';
+      const left = document.createElement('div');
+      const n = document.createElement('span'); n.className = 'tname'; n.textContent = u.name;
+      const r = document.createElement('span'); r.className = 'urole' + (u.role ? '' : ' none'); r.textContent = u.role || 'роль не указана';
+      left.appendChild(n); left.appendChild(r);
+      const acts = document.createElement('div'); acts.className = 'tacts';
+      const del = document.createElement('button'); del.className = 'del'; del.textContent = '🗑'; del.title = 'Убрать из списка';
+      del.onclick = () => deleteUser(u.name);
+      acts.appendChild(del);
+      row.appendChild(left); row.appendChild(acts);
+      d.appendChild(row);
+      box.appendChild(d);
+    });
+  } catch (e) { box.innerHTML = `<span class="empty">⚠️ ${escapeHtml(e.message)}</span>`; }
+}
+
+async function deleteUser(name) {
+  if (!confirm(`Убрать «${name}» из списка участников?`)) return;
+  try {
+    await api('/api/users/' + encodeURIComponent(name), { method: 'DELETE' });
+    loadUsers();
+  } catch (e) { el('sys', '⚠️ ' + e.message); }
+}
+
+async function loadTemplates() {
+  const box = $('templates');
+  try {
+    const list = await api('/api/templates');
+    box.innerHTML = '';
+    if (!list.length) { box.innerHTML = '<span class="empty">Шаблонов нет.</span>'; return; }
+    list.forEach(t => {
+      const d = document.createElement('div'); d.className = 'tcard';
+      const row = document.createElement('div'); row.className = 'trow';
+      const n = document.createElement('div'); n.className = 'tname'; n.textContent = t.name;
+      const acts = document.createElement('div'); acts.className = 'tacts';
+      const edit = document.createElement('button'); edit.textContent = '✎'; edit.title = 'Редактировать';
+      edit.onclick = () => editTemplate(t.name);
+      const del = document.createElement('button'); del.className = 'del'; del.textContent = '🗑'; del.title = 'Удалить';
+      del.onclick = () => deleteTemplate(t.name);
+      acts.appendChild(edit); acts.appendChild(del);
+      row.appendChild(n); row.appendChild(acts);
+      const m = document.createElement('div'); m.className = 'tmeta';
+      m.textContent = (t.description ? t.description + ' · ' : '') + `${t.total_budget_rub} ₽ · ${t.subtasks.length} подзадач`;
+      d.appendChild(row); d.appendChild(m);
+      box.appendChild(d);
+    });
+  } catch (e) { box.innerHTML = `<span class="empty">⚠️ ${escapeHtml(e.message)}</span>`; }
+}
+
+// ---------- форма шаблона ----------
+function tplRow(data) {
+  const r = document.createElement('div'); r.className = 'subrow';
+  r.innerHTML =
+    '<input placeholder="название" class="t-n">' +
+    '<input placeholder="роль" class="t-r">' +
+    '<input type="number" placeholder="%" class="t-b">' +
+    '<input type="number" step="0.05" placeholder="0–1" class="t-d">';
+  const x = document.createElement('button'); x.className = 'x tiny'; x.textContent = '✕';
+  x.onclick = () => r.remove();
+  r.appendChild(x);
+  if (data) { r.querySelector('.t-n').value = data.name||''; r.querySelector('.t-r').value = data.responsible_role||''; r.querySelector('.t-b').value = data.budget_percentage||''; r.querySelector('.t-d').value = data.execution_days_ratio||''; }
+  return r;
+}
+function addTplRow(data) { $('tplSubrows').appendChild(tplRow(data)); }
+
+// null — режим создания; иначе исходное имя редактируемого шаблона.
+let editingTemplate = null;
+
+function fillTemplateForm(t) {
+  $('tplName').value = t.name || '';
+  $('tplDesc').value = t.description || '';
+  $('tplBudget').value = t.total_budget_rub ?? '';
+  $('tplParticipants').value = t.participants_example || '';
+  $('tplDeadline').value = t.deadline_example || '';
+  $('tplSubrows').innerHTML = '';
+  (t.subtasks && t.subtasks.length ? t.subtasks : [null, null]).forEach(addTplRow);
+}
+
+function openTemplateForm() {
+  editingTemplate = null;
+  $('tplTitle').textContent = 'Новый шаблон кампании';
+  ['tplName','tplDesc','tplBudget','tplParticipants','tplDeadline'].forEach(id => $(id).value = '');
+  $('tplSubrows').innerHTML = ''; addTplRow(); addTplRow();
+  $('tplErr').style.display = 'none';
+  $('tplOverlay').classList.remove('hidden');
+}
+
+async function editTemplate(name) {
+  try {
+    const t = await api('/api/templates/' + encodeURIComponent(name));
+    editingTemplate = name;
+    $('tplTitle').textContent = `Редактировать шаблон «${name}»`;
+    fillTemplateForm(t);
+    $('tplErr').style.display = 'none';
+    $('tplOverlay').classList.remove('hidden');
+  } catch (e) { el('sys', '⚠️ ' + e.message); }
+}
+
+async function deleteTemplate(name) {
+  if (!confirm(`Удалить шаблон «${name}»?`)) return;
+  try {
+    await api('/api/templates/' + encodeURIComponent(name), { method: 'DELETE' });
+    loadTemplates();
+    el('sys', `🗑 Шаблон «${name}» удалён.`);
+  } catch (e) { el('sys', '⚠️ ' + e.message); }
+}
+
+function closeTemplateForm() { $('tplOverlay').classList.add('hidden'); }
+
+async function saveTemplate() {
+  const subtasks = [...$('tplSubrows').querySelectorAll('.subrow')].map(r => ({
+    name: r.querySelector('.t-n').value.trim(),
+    responsible_role: r.querySelector('.t-r').value.trim(),
+    budget_percentage: parseFloat(r.querySelector('.t-b').value),
+    execution_days_ratio: parseFloat(r.querySelector('.t-d').value),
+  })).filter(s => s.name);
+  const showErr = m => { $('tplErr').textContent = m; $('tplErr').style.display = 'block'; };
+  const name = $('tplName').value.trim();
+  if (!name) return showErr('Укажите название шаблона.');
+  if (!subtasks.length) return showErr('Добавьте хотя бы одну подзадачу с названием.');
+  for (const s of subtasks) {
+    if (!s.responsible_role) return showErr(`Укажите роль для подзадачи «${s.name}».`);
+    if (isNaN(s.budget_percentage) || isNaN(s.execution_days_ratio)) return showErr(`Заполните бюджет % и срок 0–1 для «${s.name}».`);
+  }
+  const body = {
+    name,
+    description: $('tplDesc').value.trim(),
+    total_budget_rub: parseFloat($('tplBudget').value) || 0,
+    participants_example: $('tplParticipants').value.trim(),
+    deadline_example: $('tplDeadline').value.trim(),
+    subtasks,
+  };
+  try {
+    if (editingTemplate) {
+      await api('/api/templates/' + encodeURIComponent(editingTemplate), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+    } else {
+      await post('/api/templates', body);
+    }
+    const wasEditing = editingTemplate;
+    closeTemplateForm();
+    loadTemplates();
+    el('sys', wasEditing ? `📌 Шаблон «${name}» обновлён.` : `📌 Шаблон «${name}» добавлен.`);
+    editingTemplate = null;
+  } catch (e) { showErr('⚠️ ' + e.message); }
+}
+
+// ---------- старт ----------
+renderWho();
+if (!USER.name) openLogin();
+else post('/api/users', { name: USER.name, role: USER.role }).then(loadUsers).catch(() => {});
+el('sys', 'Привет! Опишите маркетинговую кампанию (название, задача, дедлайн, участники, бюджет) или задайте вопрос о существующих.');
+loadToday(); loadCampaigns(); loadTemplates(); loadUsers();
+</script>
+</body>
+</html>

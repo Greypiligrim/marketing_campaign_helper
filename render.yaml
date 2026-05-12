@@ -1,0 +1,17 @@
+# Blueprint для Render (https://render.com) — бесплатный веб-сервис на Docker.
+# Деплой: New + → Blueprint → выбрать этот репозиторий. Render прочитает этот файл.
+# После создания зайдите в сервис → Environment и впишите OPENROUTER_API_KEY.
+services:
+  - type: web
+    name: marketing-bot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DEBUG
+        value: "False"
+      # Render сам подставляет PORT; приложение его подхватывает (config/settings.py).
+      - key: OPENROUTER_API_KEY
+        sync: false   # секрет — задаётся вручную в дашборде, не хранится в репозитории

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -10,6 +11,18 @@ from config import settings
 from ml import prompts
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_json(content: str) -> str:
+    """Достаёт JSON из ответа LLM: снимает markdown-ограждение и обрезает по скобкам."""
+    s = content.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
+        s = re.sub(r"\n?```$", "", s).strip()
+    start, end = s.find("{"), s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        s = s[start : end + 1]
+    return s
 
 
 def _normalize_username(username: str) -> str:
@@ -87,9 +100,19 @@ class NemotronLLM:
             logger.error(f"classify_message failed: {e}", exc_info=True)
             return "question"
 
-    async def parse_campaign(self, user_message: str) -> Dict[str, Any]:
+    async def parse_campaign(
+        self,
+        user_message: str,
+        user_display: Optional[str] = None,
+        roster: str = "",
+    ) -> Dict[str, Any]:
         try:
-            prompt_text = prompts.PARSE_CAMPAIGN.format(user_message=user_message)
+            prompt_text = prompts.PARSE_CAMPAIGN.format(
+                user_message=user_message,
+                user_context=user_display or "не представился",
+                current_date=datetime.utcnow().date().isoformat(),
+                roster=roster or "(пока никто не представился)",
+            )
             payload = {
                 "model": self.model,
                 "messages": [{"role": "user", "content": prompt_text}],
@@ -99,7 +122,7 @@ class NemotronLLM:
             content = resp["choices"][0]["message"]["content"]
             logger.info(f"Parse response: {content}")
             
-            data = json.loads(content)
+            data = json.loads(_extract_json(content))
             
             return {
                 "campaign_name": data.get("campaign_name"),
@@ -113,14 +136,52 @@ class NemotronLLM:
             logger.error(f"parse_campaign failed: {e}", exc_info=True)
             raise
 
+    async def pick_template(
+        self, campaign_name: str, task: Optional[str], templates: List[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Просит LLM выбрать подходящий шаблон. Возвращает имя шаблона или None."""
+        if not templates:
+            return None
+        try:
+            names = {t["name"] for t in templates}
+            templates_list = "\n".join(
+                f"- {t['name']}: {t.get('description') or ''} "
+                f"(подзадач: {len(t.get('subtasks') or [])})"
+                for t in templates
+            )
+            prompt_text = prompts.PICK_TEMPLATE.format(
+                campaign_name=campaign_name,
+                task=task or "",
+                templates_list=templates_list,
+            )
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt_text}],
+                "temperature": 0.0,
+            }
+            resp = await self._post(payload)
+            content = resp["choices"][0]["message"]["content"].strip().strip('"').strip()
+            logger.info(f"Pick template response: {content}")
+            if content in names:
+                return content
+            # На случай, если модель добавила лишний текст — ищем имя как подстроку.
+            for name in names:
+                if name.lower() in content.lower():
+                    return name
+            return None
+        except Exception as e:
+            logger.error(f"pick_template failed: {e}", exc_info=True)
+            return None
+
     async def decompose_task_llm(
-        self, 
-        task_name: str, 
+        self,
+        task_name: str,
         participants: List[str],
         current_date: str,
         deadline: str, 
         days_to_deadline: int,
-        budget_rub: float
+        budget_rub: float,
+        template_examples: str = ""
     ) -> List[Dict[str, Any]]:
         try:
             prompt_text = prompts.DECOMPOSE_TASK.format(
@@ -130,6 +191,7 @@ class NemotronLLM:
                 deadline=deadline,
                 days_to_deadline=days_to_deadline,
                 budget_rub=budget_rub,
+                template_examples=template_examples if template_examples else "(Нет примеров)",
             )
             
             payload = {
@@ -142,7 +204,7 @@ class NemotronLLM:
             logger.info(f"Decompose response: {content}")
 
             # Попытка спарсить JSON из ответа
-            data = json.loads(content)
+            data = json.loads(_extract_json(content))
             subtasks = data.get("subtasks", [])
             
             logger.info(f"Decomposed into {len(subtasks)} subtasks")
