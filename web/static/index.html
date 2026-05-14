@@ -25,7 +25,7 @@
   button.tiny { padding: 3px 8px; font-size: 12px; }
   button:disabled { opacity: .5; cursor: default; }
 
-  aside.side { width: 340px; background: #f7f8fa; border-left: 1px solid #e2e2e2; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 14px; }
+  aside.side { width: 510px; background: #f7f8fa; border-left: 1px solid #e2e2e2; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 14px; }
   .section { background: #fff; border: 1px solid #e6e6e6; border-radius: 12px; padding: 10px 12px; }
   .section > .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
   .section h3 { margin: 0; font-size: 14px; }
@@ -42,6 +42,14 @@
   table.sub th { color: #888; font-weight: 600; }
   tr.overdue td { background: #fff4f4; }
   tr.due td { background: #fffbe6; }
+  tr.done td { color: #888; text-decoration: line-through; background: #f6fef7; }
+  tr.done.overdue td, tr.done.due td { background: #f6fef7; }
+  .ccard.done { background: #f6fef7; border-color: #b7ebc6; }
+  .ccard.done .title b { color: #15803d; }
+  .badge-done { display: inline-block; background: #dcfce7; color: #15803d; border-radius: 6px; padding: 1px 6px; font-size: 11px; margin-left: 4px; }
+  .ccard .toggle-done { margin-top: 8px; }
+  .ccard .toggle-done button { background: #ecfdf5; color: #15803d; border: 1px solid #b7ebc6; }
+  .ccard.done .toggle-done button { background: #fff7ed; color: #b45309; border-color: #fcd9a8; }
 
   .tcard { border: 1px solid #e6e6e6; border-radius: 10px; padding: 7px 10px; margin-bottom: 7px; font-size: 13px; }
   .tcard:last-child { margin-bottom: 0; }
@@ -81,7 +89,7 @@
 <body>
 <header>
   <span>📣 Маркетинговый сервис</span>
-  <span class="user"><span id="who">не представлен</span><a onclick="openLogin()">сменить</a></span>
+  <span class="user"><span id="who">не представлен</span><a onclick="openLogin()">сменить</a><a onclick="clearChatHistory()" title="Очистить историю переписки">очистить чат</a></span>
 </header>
 
 <div class="main">
@@ -227,6 +235,7 @@ function saveLogin() {
   $('loginOverlay').classList.add('hidden');
   // регистрируем себя как участника чата, чтобы LLM знал «кто есть кто»
   post('/api/users', { name, role }).then(loadUsers).catch(() => {});
+  loadChatHistory();
 }
 
 // ---------- чат ----------
@@ -337,9 +346,10 @@ async function loadToday() {
   const box = $('today');
   try {
     const list = await api('/api/reminders/today');
+    const open = list.filter(s => !s.completed);
     box.innerHTML = '';
-    if (!list.length) { box.innerHTML = '<span class="empty">Дедлайнов на сегодня нет.</span>'; return; }
-    list.forEach(s => {
+    if (!open.length) { box.innerHTML = '<span class="empty">Дедлайнов на сегодня нет.</span>'; return; }
+    open.forEach(s => {
       const d = document.createElement('div'); d.className = 'todo';
       d.textContent = `${s.campaign_name ? '['+s.campaign_name+'] ' : ''}${s.name} — ${s.responsible}, ${s.budget_rub} ₽`;
       box.appendChild(d);
@@ -358,10 +368,12 @@ async function loadCampaigns() {
 }
 
 function campaignCard(c) {
-  const card = document.createElement('div'); card.className = 'ccard';
+  const card = document.createElement('div'); card.className = 'ccard' + (c.completed ? ' done' : '');
   const title = document.createElement('div'); title.className = 'title';
   const left = document.createElement('span');
-  left.innerHTML = `<b>${escapeHtml(c.name)}</b>` + (c.template_used ? `<span class="tag">${escapeHtml(c.template_used)}</span>` : '');
+  const doneBadge = c.completed ? '<span class="badge-done">✓ завершена</span>' : '';
+  const tplTag = c.template_used ? `<span class="tag">${escapeHtml(c.template_used)}</span>` : '';
+  left.innerHTML = `<b>${escapeHtml(c.name)}</b>` + doneBadge + tplTag;
   const del = document.createElement('button'); del.className = 'tiny ghost'; del.textContent = '✕';
   del.title = 'Удалить кампанию';
   del.onclick = async (ev) => {
@@ -373,29 +385,69 @@ function campaignCard(c) {
   title.appendChild(left); title.appendChild(del);
   card.appendChild(title);
 
+  const doneCnt = c.subtasks.filter(s => s.completed).length;
   const meta = document.createElement('div'); meta.className = 'meta';
   const parts = [];
   if (c.created_by) parts.push('👤 ' + c.created_by);
   parts.push('⏰ ' + (c.deadline || '—'));
   parts.push('💰 ' + c.budget_rub + ' ₽');
-  parts.push('📋 ' + c.subtasks.length + ' подзадач');
+  parts.push(`📋 ${doneCnt}/${c.subtasks.length} подзадач`);
   meta.textContent = parts.join('  ·  ');
   card.appendChild(meta);
 
   let table = null;
-  title.onclick = () => {
-    if (table) { table.remove(); table = null; return; }
+  let toggleBox = null;
+  title.onclick = (ev) => {
+    if (ev.target.closest('button')) return;
+    if (table) { table.remove(); table = null; if (toggleBox) { toggleBox.remove(); toggleBox = null; } return; }
     table = document.createElement('table'); table.className = 'sub';
-    table.innerHTML = '<tr><th>Подзадача</th><th>Ответственный</th><th>Бюджет</th><th>Срок</th><th>Дедлайн</th></tr>';
+    table.innerHTML = '<tr><th></th><th>Подзадача</th><th>Ответственный</th><th>Бюджет</th><th>Срок</th><th>Дедлайн</th></tr>';
     c.subtasks.forEach(s => {
       const tr = document.createElement('tr');
-      tr.className = dayCls(s.deadline);
+      tr.className = (s.completed ? 'done ' : '') + dayCls(s.deadline);
+      const tdChk = document.createElement('td');
+      const chk = document.createElement('input'); chk.type = 'checkbox'; chk.checked = !!s.completed;
+      chk.title = 'Отметить выполнение';
+      chk.onclick = (e) => e.stopPropagation();
+      chk.onchange = async () => {
+        chk.disabled = true;
+        try {
+          const updated = await api(`/api/campaigns/${encodeURIComponent(c.name)}/subtasks/${s.id}`, {
+            method: 'PATCH', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ completed: chk.checked }),
+          });
+          // обновляем локально и перерисовываем
+          Object.assign(c, updated);
+          loadCampaigns(); loadToday();
+        } catch (err) {
+          chk.checked = !chk.checked;
+          el('sys', '⚠️ ' + err.message);
+        } finally { chk.disabled = false; }
+      };
+      tdChk.appendChild(chk); tr.appendChild(tdChk);
       [s.name, s.responsible, s.budget_rub + ' ₽', s.execution_days + ' дн.', s.deadline || '—'].forEach(v => {
         const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
       });
       table.appendChild(tr);
     });
     card.appendChild(table);
+
+    toggleBox = document.createElement('div'); toggleBox.className = 'toggle-done';
+    const tBtn = document.createElement('button'); tBtn.className = 'tiny';
+    tBtn.textContent = c.completed ? '↺ Открыть заново' : '✓ Отметить всю кампанию выполненной';
+    tBtn.onclick = async (e) => {
+      e.stopPropagation();
+      tBtn.disabled = true;
+      try {
+        await api(`/api/campaigns/${encodeURIComponent(c.name)}/completed`, {
+          method: 'PATCH', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ completed: !c.completed }),
+        });
+        loadCampaigns(); loadToday();
+      } catch (err) { el('sys', '⚠️ ' + err.message); tBtn.disabled = false; }
+    };
+    toggleBox.appendChild(tBtn);
+    card.appendChild(toggleBox);
   };
   return card;
 }
@@ -556,11 +608,37 @@ async function saveTemplate() {
   } catch (e) { showErr('⚠️ ' + e.message); }
 }
 
+// ---------- история диалога ----------
+async function loadChatHistory() {
+  log.innerHTML = '';
+  try {
+    const q = USER.name ? ('?user_name=' + encodeURIComponent(USER.name)) : '';
+    const items = await api('/api/chat/history' + q);
+    if (!items.length) {
+      el('sys', 'Привет! Опишите маркетинговую кампанию (название, задача, дедлайн, участники, бюджет) или задайте вопрос о существующих.');
+      return;
+    }
+    items.forEach(m => el(m.role === 'user' ? 'msg user' : 'msg bot', m.content));
+  } catch (e) {
+    el('sys', '⚠️ Не удалось загрузить историю: ' + e.message);
+  }
+}
+
+async function clearChatHistory() {
+  if (!confirm('Очистить историю переписки?')) return;
+  try {
+    const q = USER.name ? ('?user_name=' + encodeURIComponent(USER.name)) : '';
+    await api('/api/chat/history' + q, { method: 'DELETE' });
+    pendingClarify = null;
+    loadChatHistory();
+  } catch (e) { el('sys', '⚠️ ' + e.message); }
+}
+
 // ---------- старт ----------
 renderWho();
 if (!USER.name) openLogin();
 else post('/api/users', { name: USER.name, role: USER.role }).then(loadUsers).catch(() => {});
-el('sys', 'Привет! Опишите маркетинговую кампанию (название, задача, дедлайн, участники, бюджет) или задайте вопрос о существующих.');
+loadChatHistory();
 loadToday(); loadCampaigns(); loadTemplates(); loadUsers();
 </script>
 </body>

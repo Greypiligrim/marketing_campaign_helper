@@ -18,6 +18,7 @@ from db.models import (
     AsyncSessionLocal,
     Campaign,
     CampaignTemplate,
+    ChatMessage,
     ChatUser,
     PendingCampaign,
     Subtask,
@@ -61,6 +62,8 @@ def campaign_to_dict(c: Campaign) -> Dict[str, Any]:
         "budget_rub": c.budget_rub,
         "created_by": c.created_by,
         "template_used": c.template_used,
+        "completed": c.completed_at is not None,
+        "completed_at": c.completed_at.isoformat() if c.completed_at else None,
         "subtasks": [subtask_to_dict(s) for s in c.subtasks],
     }
 
@@ -75,6 +78,8 @@ def subtask_to_dict(s: Subtask) -> Dict[str, Any]:
         "execution_days": s.execution_days,
         "deadline": s.deadline.date().isoformat() if s.deadline else None,
         "reminder_sent": bool(s.reminder_sent),
+        "completed": s.completed_at is not None,
+        "completed_at": s.completed_at.isoformat() if s.completed_at else None,
     }
 
 
@@ -289,8 +294,11 @@ async def get_template_examples() -> str:
         return ""
 
 
-async def answer_question(question: str) -> str:
-    """Отвечает на вопрос пользователя, используя данные всех кампаний."""
+async def answer_question(question: str, history: Optional[List[Dict[str, str]]] = None) -> str:
+    """Отвечает на вопрос пользователя, используя данные всех кампаний.
+
+    ``history`` — недавняя переписка (последние реплики юзера и бота) для контекста.
+    """
     async with AsyncSessionLocal() as session:
         stmt = select(Campaign).options(selectinload(Campaign.subtasks))
         result = await session.execute(stmt)
@@ -301,20 +309,89 @@ async def answer_question(question: str) -> str:
 
     campaigns_context = ""
     for campaign in campaigns:
-        campaigns_context += f"\n📌 Кампания: {campaign.name}\n"
+        status = "✅ завершена" if campaign.completed_at else "🟡 в работе"
+        campaigns_context += f"\n📌 Кампания: {campaign.name} ({status})\n"
         campaigns_context += f"   Ответственные: {campaign.responsible}\n"
         campaigns_context += f"   Дедлайн: {campaign.deadline.date()}\n"
         campaigns_context += f"   Бюджет: {campaign.budget_rub} ₽\n"
         if campaign.subtasks:
+            done = sum(1 for s in campaign.subtasks if s.completed_at is not None)
+            campaigns_context += f"   Прогресс: {done}/{len(campaign.subtasks)} подзадач выполнено\n"
             campaigns_context += "   Подзадачи:\n"
             for task in campaign.subtasks:
-                campaigns_context += f"   - {task.name}\n"
+                mark = "✅ выполнено" if task.completed_at else "⬜ не выполнено"
+                campaigns_context += f"   - [{mark}] {task.name}\n"
                 campaigns_context += f"     Ответственный: {task.responsible}\n"
-                campaigns_context += f"     Срок: {task.execution_days} дней\n"
+                campaigns_context += f"     Срок: {task.execution_days} дней (дедлайн {task.deadline.date()})\n"
                 campaigns_context += f"     Бюджет: {task.budget_rub} ₽\n"
         campaigns_context += "\n"
 
-    return await llm_client.answer_question(question, campaigns_context)
+    return await llm_client.answer_question(question, campaigns_context, history=history)
+
+
+# --------------------------------------------------------------------------- #
+# Память диалога (история сообщений чата)
+# --------------------------------------------------------------------------- #
+CHAT_HISTORY_LIMIT_DEFAULT = 50  # сколько сообщений отдаём фронтенду
+CHAT_HISTORY_FOR_LLM = 10  # сколько последних реплик подмешиваем LLM в контекст
+
+
+def _history_key(user_name: Optional[str]) -> str:
+    return (user_name or "").strip() or "_anonymous_"
+
+
+async def save_chat_message(user_name: Optional[str], role: str, content: str) -> None:
+    """Сохраняет одну реплику в истории чата. Тихо игнорирует пустой контент."""
+    content = (content or "").strip()
+    if not content or role not in ("user", "assistant"):
+        return
+    async with AsyncSessionLocal() as session:
+        session.add(
+            ChatMessage(
+                user_name=_history_key(user_name),
+                role=role,
+                content=content,
+                created_at=datetime.utcnow(),
+            )
+        )
+        await session.commit()
+
+
+async def load_chat_history(
+    user_name: Optional[str], limit: int = CHAT_HISTORY_LIMIT_DEFAULT
+) -> List[Dict[str, Any]]:
+    """Возвращает последние ``limit`` сообщений диалога этого пользователя в хронологическом порядке."""
+    key = _history_key(user_name)
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(ChatMessage)
+            .where(ChatMessage.user_name == key)
+            .order_by(ChatMessage.id.desc())
+            .limit(max(1, int(limit)))
+        )
+        result = await session.execute(stmt)
+        rows = list(result.scalars().all())
+    rows.reverse()
+    return [
+        {
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in rows
+    ]
+
+
+async def clear_chat_history(user_name: Optional[str]) -> int:
+    """Удаляет всю историю диалога этого пользователя. Возвращает число удалённых сообщений."""
+    key = _history_key(user_name)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            sa_delete(ChatMessage).where(ChatMessage.user_name == key)
+        )
+        await session.commit()
+        return result.rowcount or 0
 
 
 # --------------------------------------------------------------------------- #
@@ -326,6 +403,73 @@ async def list_campaigns() -> List[Dict[str, Any]]:
         result = await session.execute(stmt)
         campaigns = result.scalars().all()
     return [campaign_to_dict(c) for c in campaigns]
+
+
+async def _recompute_campaign_completion(session, campaign: Campaign) -> None:
+    """Авто-выставляет ``campaign.completed_at`` исходя из состояния его подзадач:
+    если все завершены — отмечает кампанию, если хоть одна снята — снимает отметку.
+    Вызывается после изменения статуса подзадачи в той же транзакции.
+    """
+    if not campaign.subtasks:
+        return
+    all_done = all(s.completed_at is not None for s in campaign.subtasks)
+    if all_done and campaign.completed_at is None:
+        campaign.completed_at = datetime.utcnow()
+    elif not all_done and campaign.completed_at is not None:
+        campaign.completed_at = None
+
+
+async def set_subtask_completed(
+    campaign_name: str, subtask_id: int, completed: bool
+) -> Dict[str, Any]:
+    """Отмечает подзадачу выполненной/в работе и пересчитывает статус кампании."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Campaign)
+            .where(Campaign.name == campaign_name)
+            .options(selectinload(Campaign.subtasks))
+        )
+        campaign = result.scalars().first()
+        if campaign is None:
+            raise CampaignError(f"Кампания '{campaign_name}' не найдена.")
+        subtask = next((s for s in campaign.subtasks if s.id == subtask_id), None)
+        if subtask is None:
+            raise CampaignError(f"Подзадача #{subtask_id} не найдена в '{campaign_name}'.")
+        subtask.completed_at = datetime.utcnow() if completed else None
+        await _recompute_campaign_completion(session, campaign)
+        await session.commit()
+        await session.refresh(campaign)
+        result = await session.execute(
+            select(Campaign).where(Campaign.id == campaign.id).options(selectinload(Campaign.subtasks))
+        )
+        campaign = result.scalars().first()
+        return campaign_to_dict(campaign)
+
+
+async def set_campaign_completed(name: str, completed: bool) -> Dict[str, Any]:
+    """Ручная отметка всей кампании. При completed=True помечает все подзадачи как выполненные;
+    при completed=False — снимает отметку с кампании (подзадачи не трогает)."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Campaign).where(Campaign.name == name).options(selectinload(Campaign.subtasks))
+        )
+        campaign = result.scalars().first()
+        if campaign is None:
+            raise CampaignError(f"Кампания '{name}' не найдена.")
+        now = datetime.utcnow()
+        if completed:
+            for s in campaign.subtasks:
+                if s.completed_at is None:
+                    s.completed_at = now
+            campaign.completed_at = now
+        else:
+            campaign.completed_at = None
+        await session.commit()
+        result = await session.execute(
+            select(Campaign).where(Campaign.id == campaign.id).options(selectinload(Campaign.subtasks))
+        )
+        campaign = result.scalars().first()
+        return campaign_to_dict(campaign)
 
 
 async def delete_campaign(name: str) -> bool:

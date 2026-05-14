@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Описание архитектуры проекта</title>
+<style>
+  @page { size: A4; margin: 22mm 18mm; }
+  html, body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #2f3437;
+    font-size: 11.5pt;
+    line-height: 1.55;
+    margin: 0;
+    padding: 0;
+  }
+  h1 { font-size: 26pt; font-weight: 700; margin: 0 0 14pt; letter-spacing: -0.4pt; }
+  h2 { font-size: 18pt; font-weight: 700; margin: 28pt 0 10pt; letter-spacing: -0.2pt; }
+  h3 { font-size: 13pt; font-weight: 700; margin: 18pt 0 6pt; }
+  p { margin: 6pt 0; }
+  ul { margin: 6pt 0; padding-left: 22pt; }
+  li { margin: 3pt 0; }
+  li > ul { margin-top: 3pt; }
+  code, pre {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    font-size: 9.5pt;
+  }
+  code { background: rgba(135,131,120,.15); color: #eb5757; border-radius: 3px; padding: 1px 4px; }
+  pre {
+    background: #f7f6f3;
+    border-radius: 4px;
+    padding: 12pt 14pt;
+    overflow-x: auto;
+    line-height: 1.45;
+    white-space: pre;
+    margin: 8pt 0;
+  }
+  pre code { background: transparent; color: #2f3437; padding: 0; font-size: 9.5pt; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
+  th, td { border: 1px solid #e3e2e0; padding: 6pt 9pt; text-align: left; vertical-align: top; font-size: 10.5pt; }
+  th { background: #f7f6f3; font-weight: 600; }
+  b, strong { font-weight: 700; }
+  .lead { font-size: 11.5pt; }
+  .badge { display: inline-block; background: #ecfdf5; color: #15803d; border: 1px solid #b7ebc6; border-radius: 5px; padding: 0 6px; font-size: 9pt; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<h1>Описание архитектуры проекта</h1>
+
+<p class="lead">Название проекта: <b>Marketing Service (Web API)</b> — веб-сервис управления маркетинговыми кампаниями с использованием большой языковой модели (LLM): классификация сообщений, парсинг описания кампании в структуру, разбиение кампании на подзадачи (по подходящему шаблону или свободно через LLM), ответы на вопросы по данным кампаний, отслеживание прогресса выполнения и память диалога с пользователем. Изначально проект был Telegram-ботом, сейчас это REST API + веб-чат с боковой панелью кампаний и шаблонов.</p>
+
+<h2>Список ключевых технологических компонентов системы</h2>
+
+<h3>Веб-бэкенд (REST API)</h3>
+<ul>
+  <li>FastAPI + Uvicorn (ASGI), автодокументация OpenAPI</li>
+  <li>Эндпоинты чата, истории диалога, кампаний, шаблонов, участников, напоминаний</li>
+  <li>Раздача статики веб-чата</li>
+</ul>
+
+<h3>LLM-компонент</h3>
+<ul>
+  <li>Облачный доступ к модели через OpenRouter (<code>openai/gpt-5-nano</code>)</li>
+  <li>Классификация входящего сообщения (кампания / вопрос / прочее)</li>
+  <li>Парсинг свободного текста в структуру кампании</li>
+  <li>Подбор подходящего шаблона разбиения</li>
+  <li>Разбиение задачи на подзадачи (когда шаблон не подходит)</li>
+  <li>Ответы на вопросы пользователя по контексту кампаний (Q&amp;A) с учётом истории диалога</li>
+</ul>
+
+<h3>База данных</h3>
+<ul>
+  <li>SQLite + SQLAlchemy (асинхронно, через <code>aiosqlite</code>)</li>
+  <li>Кампании и подзадачи (с отметками выполнения)</li>
+  <li>Шаблоны кампаний и их подзадачи</li>
+  <li>Участники чата (имя + роль)</li>
+  <li>Ожидающие подтверждения («pending») кампании</li>
+  <li>История сообщений чата (память диалога)</li>
+</ul>
+
+<h3>Бизнес-логика</h3>
+<ul>
+  <li>Чистый слой <code>core/service.py</code> без привязки к транспорту</li>
+  <li>Детерминированное построение подзадач из шаблона (бюджет — % от общего, срок — доля дней до дедлайна)</li>
+  <li>Сопоставление участников и ролей, разрешение само-упоминаний («я», «дизайнер (я)»)</li>
+  <li>Дозаполнение и слияние данных кампании при уточняющем диалоге</li>
+  <li>Авто-пересчёт статуса кампании по состоянию её подзадач</li>
+</ul>
+
+<h3>Интерфейс</h3>
+<ul>
+  <li>Статический веб-чат (HTML/CSS/JS, без сборщика)</li>
+  <li>Боковая панель: список кампаний с подзадачами, шаблоны, дедлайны на сегодня</li>
+  <li>Чекбоксы выполнения подзадач и кнопка отметки всей кампании <span class="badge">✓ завершена</span></li>
+  <li>Восстановление истории переписки при входе и кнопка «очистить чат»</li>
+  <li>Логин по имени и роли (хранится в браузере, без паролей)</li>
+  <li>Формы добавления/редактирования шаблонов</li>
+</ul>
+
+<h2>Технологический стек системы управления маркетинговыми кампаниями</h2>
+
+<h3>1. Общая архитектура</h3>
+<p>Система построена как <b>монолитное веб-приложение</b>: единый бэкенд на FastAPI, одна встроенная реляционная БД SQLite, обращение к LLM через облачный шлюз OpenRouter и лёгкий статический фронтенд (один HTML-файл). Все серверные компоненты запускаются одним процессом Uvicorn; внешних сервисов и оркестрации не требуется.</p>
+
+<pre><code>[Браузер: веб-чат index.html]
+        |
+        |  HTTP / JSON  (fetch к /api/*)
+        v
+[FastAPI Backend (web/app.py)]  —вызовы—&gt;  [Бизнес-логика (core/service.py)]
+        |                                       |
+        |  SQLAlchemy (async)                   |  aiohttp (HTTPS)
+        v                                       v
+[SQLite: marketing_bot.db]              [OpenRouter API: openai/gpt-5-nano]</code></pre>
+
+<h3>2. Бэкенд: FastAPI + Uvicorn</h3>
+<ul>
+  <li><b>Роль</b>: единый сервис — приём сообщений чата, CRUD кампаний/шаблонов/участников, история диалога, обращение к LLM, выдача статики веб-чата.</li>
+  <li><b>Почему</b>: асинхронный, минимум кода, встроенная документация OpenAPI (<code>/docs</code>), просто стыкуется со статическим фронтендом и с HTTP-клиентом к LLM.</li>
+  <li><b>Основные эндпоинты</b>:
+    <ul>
+      <li><code>POST /api/chat</code> — отправить сообщение; ответ: <code>question</code>/<code>other</code> (текст), <code>campaign</code> (превью + <code>pending_id</code>) или <code>clarify</code> (не хватает данных — список <code>missing</code>). Сохраняет и реплику пользователя, и ответ бота в историю.</li>
+      <li><code>POST /api/campaigns/refine</code> — дозаполнить ожидающую кампанию новым сообщением</li>
+      <li><code>POST /api/campaigns/confirm</code> — подтвердить создание кампании по <code>pending_id</code></li>
+      <li><code>POST /api/campaigns/cancel</code> — отменить ожидающую кампанию</li>
+      <li><code>GET /api/campaigns</code>, <code>DELETE /api/campaigns/{name}</code> — список и удаление кампаний</li>
+      <li><code>PATCH /api/campaigns/{name}/completed</code> — отметить всю кампанию выполненной (или вернуть в работу)</li>
+      <li><code>PATCH /api/campaigns/{name}/subtasks/{id}</code> — переключить статус подзадачи; кампания автоматически помечается завершённой, если все её подзадачи выполнены</li>
+      <li><code>GET/POST/PUT/DELETE /api/templates[/{name}]</code> — CRUD шаблонов</li>
+      <li><code>GET/POST/DELETE /api/users[/{name}]</code> — реестр участников чата</li>
+      <li><code>GET /api/reminders/today</code> — подзадачи с дедлайном сегодня (отфильтрованы от уже выполненных)</li>
+      <li><code>GET /api/chat/history</code>, <code>DELETE /api/chat/history</code> — загрузка и очистка истории диалога пользователя</li>
+      <li><code>GET /api/health</code> — health-check (<code>{"status":"ok"}</code>)</li>
+      <li><code>GET /</code> и <code>/static/*</code> — веб-чат и его статика</li>
+    </ul>
+  </li>
+  <li><b>Особенности</b>:
+    <ul>
+      <li>Время жизни приложения (<code>lifespan</code>): создание таблиц, мини-миграции SQLite, инициализация встроенных шаблонов, фоновая задача очистки просроченных pending-кампаний (раз в час).</li>
+      <li>Таймаут на вызов LLM — 60 секунд; ошибки LLM маппятся в HTTP 502 с понятным текстом.</li>
+      <li>Валидация входных данных через Pydantic-схемы; ошибки бизнес-логики (<code>CampaignError</code>) → HTTP 400/404.</li>
+    </ul>
+  </li>
+</ul>
+
+<h3>3. База данных: SQLite + SQLAlchemy</h3>
+<ul>
+  <li><b>СУБД</b>: SQLite (файл <code>marketing_bot.db</code>), доступ асинхронный — SQLAlchemy 2.0 + <code>aiosqlite</code>.</li>
+  <li><b>Почему</b>: нулевая настройка, один файл, достаточно для MVP (десятки–сотни кампаний); при необходимости легко заменить на PostgreSQL, вынеся <code>DATABASE_URL</code> в окружение.</li>
+  <li><b>Схема</b> (упрощённо):</li>
+</ul>
+<pre><code>campaigns(id, name UNIQUE, responsible, deadline, budget_rub,
+          chat_id, created_by, template_used, completed_at)
+subtasks(id, campaign_id -&gt; campaigns.id, name, responsible,
+         budget_rub, execution_days, deadline, reminder_sent,
+         completed_at)
+campaign_templates(id, name UNIQUE, description, total_budget_rub,
+                   participants_example, deadline_example, created_by)
+template_subtasks(id, template_id -&gt; campaign_templates.id, name,
+                  responsible_role, budget_percentage, execution_days_ratio)
+chat_users(id, name UNIQUE, role, created_at, updated_at)
+chat_messages(id, user_name INDEX, role, content, created_at INDEX)
+pending_campaigns(id UUID, data JSON, created_at)</code></pre>
+<ul>
+  <li><b>Миграции</b>: <code>Base.metadata.create_all</code> создаёт недостающие таблицы; недостающие колонки на старой БД добавляются вручную (<code>_migrate_sqlite</code>, <code>ALTER TABLE</code>) — в т.ч. <code>completed_at</code> у campaigns и subtasks при апгрейде.</li>
+  <li><b>pending-кампании</b>: распарсенные, но ещё не подтверждённые кампании хранятся в БД (а не в памяти процесса) — переживают перезапуск, работают при нескольких воркерах, автоматически удаляются через <code>PENDING_TTL_HOURS = 24</code> ч.</li>
+  <li><b>chat_messages</b>: единая таблица истории диалога. Ключ диалога — <code>user_name</code> (или <code>_anonymous_</code>, если имя не задано); хранятся и реплики пользователя, и ответы бота. Используется для двух целей: восстановления переписки в UI и подмешивания последних N реплик в контекст LLM.</li>
+</ul>
+
+<h3>4. LLM-компонент: OpenRouter (openai/gpt-5-nano)</h3>
+<ul>
+  <li><b>Доступ</b>: облачный — OpenRouter, OpenAI-совместимый эндпоинт <code>https://openrouter.ai/api/v1/chat/completions</code>, модель <code>openai/gpt-5-nano</code>.</li>
+  <li><b>Интеграция</b>: из бэкенда асинхронным HTTP-клиентом (<code>aiohttp</code>), ключ — переменная окружения <code>OPENROUTER_API_KEY</code>.</li>
+  <li><b>Сценарии вызова</b> (класс <code>NemotronLLM</code>, модуль <code>ml/llm.py</code>):
+    <ul>
+      <li><code>classify_message</code> — одно слово: <code>campaign</code> / <code>question</code> / <code>other</code> (<code>temperature=0</code>)</li>
+      <li><code>parse_campaign</code> — текст → JSON: <code>campaign_name</code>, <code>task</code>, <code>deadline</code>, <code>participants</code>, <code>budget_rub</code>, <code>confidence_score</code>; в промпт подаётся реестр участников и текущая дата</li>
+      <li><code>pick_template</code> — выбор имени шаблона из списка или <code>none</code></li>
+      <li><code>decompose_task_llm</code> — JSON со списком подзадач (имя, ответственный, дни, бюджет) с жёсткими ограничениями</li>
+      <li><code>answer_question</code> — краткий ответ по собранному контексту всех кампаний и недавним репликам диалога; собирает полноценный <code>messages</code>-массив (system + история до 10 реплик + текущий вопрос), <code>temperature=0.2</code></li>
+    </ul>
+  </li>
+  <li><b>Парсинг ответа</b>: <code>_extract_json</code> снимает markdown-ограждение и обрезает по фигурным скобкам — устойчиво к «болтливости» модели.</li>
+  <li><b>Промпты</b> вынесены в <code>ml/prompts.py</code> (русский язык, формат «только JSON»); для Q&amp;A используется <code>QA_SYSTEM</code> — system-промпт со встроенным контекстом кампаний и явными правилами учёта предыдущих реплик («а у этой?», «а кто там?»). Нормализация дат — через <code>dateparser</code> (порядок ДМГ).</li>
+</ul>
+
+<h3>5. Шаблоны кампаний и разбиение на подзадачи</h3>
+<ul>
+  <li><b>Встроенные шаблоны</b> (<code>config/templates.py</code>): «Таргет», «Контекст», «Запуск продукта» — каждый описывает подзадачи с долей бюджета (<code>budget_percentage</code>) и долей срока (<code>execution_days_ratio</code>). При старте записываются в БД, если их там ещё нет; пользователь может добавлять/редактировать свои шаблоны через API и веб-форму.</li>
+  <li><b>Логика разбиения</b> (<code>core/service.py</code>):
+    <ol>
+      <li>LLM выбирает подходящий шаблон по названию/задаче кампании.</li>
+      <li>Если шаблон выбран <i>и</i> участников хватает на его роли — подзадачи строятся <b>детерминированно</b>: бюджет = % от общего, срок = доля от дней до дедлайна, ответственные раздаются по кругу с указанием роли.</li>
+      <li>Иначе — <b>свободное разбиение через LLM</b> под реально указанную команду (с примерами из шаблонов в подсказке).</li>
+      <li>Имя применённого шаблона сохраняется в <code>Campaign.template_used</code> (или <code>null</code>).</li>
+    </ol>
+  </li>
+  <li>Подзадачи получают целочисленный срок <code>execution_days ≥ 1</code> и дату дедлайна (<code>today + execution_days</code>); суммы бюджетов и сроков ограничены параметрами кампании.</li>
+</ul>
+
+<h3>6. Отслеживание прогресса (новое)</h3>
+<ul>
+  <li><b>Модель</b>: у <code>Campaign</code> и <code>Subtask</code> есть колонка <code>completed_at</code> (timestamp или <code>null</code>). Признак «выполнено» — это <code>completed_at IS NOT NULL</code>; в API отдаются производные поля <code>completed: bool</code> и <code>completed_at: iso</code>.</li>
+  <li><b>Эндпоинты</b>:
+    <ul>
+      <li><code>PATCH /api/campaigns/{name}/subtasks/{id}</code> — снять/поставить отметку выполнения подзадачи.</li>
+      <li><code>PATCH /api/campaigns/{name}/completed</code> — отметить кампанию вручную; при <code>completed=true</code> заодно проставляет все её подзадачи.</li>
+    </ul>
+  </li>
+  <li><b>Авто-пересчёт</b> (<code>_recompute_campaign_completion</code>): после переключения подзадачи в той же транзакции пересчитывается состояние кампании — если все подзадачи выполнены, кампания помечается завершённой; если снять отметку хотя бы с одной, кампания возвращается «в работу».</li>
+  <li><b>UI</b>: чекбокс в строке подзадачи, кнопка «✓ Отметить всю кампанию выполненной» / «↺ Открыть заново», бейдж <span class="badge">✓ завершена</span>, прогресс «N/M подзадач», зачёркнутые/зелёные выполненные элементы. Выполненные подзадачи также скрываются из «Дедлайны на сегодня».</li>
+  <li><b>LLM-контекст</b>: для Q&amp;A в контекст каждой кампании теперь добавляются её статус и прогресс <code>done/total</code>, а у подзадач — отметка <code>[✅ выполнено] / [⬜ не выполнено]</code>. Это позволяет отвечать на вопросы вида «что ещё осталось по X?», «сколько кампаний завершено?».</li>
+</ul>
+
+<h3>7. Память диалога (новое)</h3>
+<ul>
+  <li><b>Хранение</b>: таблица <code>chat_messages</code>, ключ диалога — имя пользователя из логина (или <code>_anonymous_</code>). Сохраняются и пользовательские реплики, и ответы бота (включая текст подсказки в <code>other</code>, ответ Q&amp;A, краткое описание сформированной кампании, реплики <code>clarify</code>).</li>
+  <li><b>Слой бизнес-логики</b> (<code>core/service.py</code>):
+    <ul>
+      <li><code>save_chat_message(user_name, role, content)</code> — сохраняет одну реплику.</li>
+      <li><code>load_chat_history(user_name, limit)</code> — последние <code>limit</code> сообщений в хронологическом порядке (по умолчанию 50 для UI, 10 для LLM-контекста: <code>CHAT_HISTORY_FOR_LLM = 10</code>).</li>
+      <li><code>clear_chat_history(user_name)</code> — удаляет всю историю диалога этого пользователя.</li>
+    </ul>
+  </li>
+  <li><b>LLM</b>: <code>answer_question</code> принимает параметр <code>history</code> и собирает <code>messages = [system + история + текущий вопрос]</code>. Текущая реплика пользователя исключается из истории, чтобы не дублироваться. Это даёт корректную работу с указательными местоимениями («там», «у этой», «а кто ответственный?»).</li>
+  <li><b>UI</b>: при логине история подгружается с бэкенда (<code>GET /api/chat/history?user_name=...</code>) и вставляется в окно чата вместо стартовой подсказки. В шапке есть ссылка «очистить чат» — после подтверждения дергает <code>DELETE /api/chat/history</code> и перерисовывает окно.</li>
+</ul>
+
+<h3>8. Интерфейс: статический веб-чат</h3>
+<ul>
+  <li><b>Реализация</b>: один файл <code>web/static/index.html</code> (разметка + стили + JS, без npm и сборки) — бэкенд отдаёт его на <code>GET /</code>.</li>
+  <li><b>Возможности</b>:
+    <ul>
+      <li>Чат с ботом: ввод сообщения → вызов <code>/api/chat</code>; превью кампании с кнопками «Подтвердить»/«Отменить»; режим уточнения (дослать недостающие данные сообщением → <code>/api/campaigns/refine</code>).</li>
+      <li>Восстановление и очистка переписки через <code>/api/chat/history</code>.</li>
+      <li>Боковая панель: список кампаний с подзадачами и чекбоксами выполнения, бейджи статуса, прогресс, список шаблонов, подзадачи с дедлайном сегодня.</li>
+      <li>Логин: имя + роль сохраняются в браузере (без паролей), передаются в запросы и попадают в реестр участников (<code>/api/users</code>) и в поле <code>created_by</code> кампании.</li>
+      <li>Формы добавления и редактирования шаблонов кампаний.</li>
+    </ul>
+  </li>
+</ul>
+
+<h3>9. Сценарий обработки сообщения</h3>
+<pre><code>сообщение пользователя
+    -&gt; save_chat_message(user)
+    -&gt; classify_message:
+       "question" -&gt; load_chat_history -&gt; answer_question(контекст + история) -&gt; текст
+       "other"    -&gt; подсказка о возможностях
+       "campaign" -&gt; parse_campaign -&gt; enrich_parsed -&gt; create_pending
+                     не хватает полей? -&gt; ответ "clarify" (список missing)
+                                          пользователь дослыхает -&gt; /api/campaigns/refine
+                                                                  -&gt; merge_parsed -&gt; ...
+                     всё есть?         -&gt; ответ "campaign" (preview, pending_id)
+                                          -&gt; /api/campaigns/confirm
+                                                  -&gt; pick_template -&gt; детерминированно из шаблона
+                                                                    \-&gt; либо decompose_task_llm (LLM)
+                                                  -&gt; запись Campaign + Subtasks -&gt; delete_pending
+    -&gt; save_chat_message(assistant)</code></pre>
+
+<h3>10. Сбор и запуск системы</h3>
+<ul>
+  <li><b>Необходимое ПО</b>: Python 3.10+ (Docker-образ — <code>python:3.12-slim</code>); доступ в интернет к OpenRouter.</li>
+  <li><b>Зависимости</b> (<code>requirements.txt</code>): <code>fastapi</code>, <code>uvicorn[standard]</code>, <code>aiohttp</code>, <code>sqlalchemy</code>, <code>aiosqlite</code>, <code>python-dotenv</code>, <code>dateparser</code>.</li>
+  <li><b>Переменные окружения</b> (<code>.env</code>):</li>
+</ul>
+<pre><code>OPENROUTER_API_KEY=sk-or-v1-...
+DEBUG=True
+# опционально:
+# HOST=0.0.0.0
+# PORT=8000</code></pre>
+<ul>
+  <li><b>Запуск локально</b>:</li>
+</ul>
+<pre><code>pip install -r requirements.txt
+python main.py             # или: uvicorn web.app:app --reload
+# открыть http://127.0.0.1:8000/    (документация API: /docs)</code></pre>
+<ul>
+  <li><b>Запуск в Docker</b>:</li>
+</ul>
+<pre><code>docker build -t marketing-service .
+docker run -p 8000:8000 -e OPENROUTER_API_KEY=sk-or-v1-... \
+  -v "$PWD/marketing_bot.db:/app/marketing_bot.db" marketing-service</code></pre>
+
+<h3>11. Деплой на Render</h3>
+<ul>
+  <li>В репозитории есть <code>render.yaml</code> (blueprint) и <code>Dockerfile</code> — бесплатный web-сервис на Docker, health-check <code>/api/health</code>, <code>autoDeploy</code>.</li>
+  <li>Порядок: запушить репозиторий на GitHub → на render.com <i>New + Blueprint</i> → выбрать репозиторий → <i>Apply</i> → в созданном сервисе <i>Environment</i> добавить <code>OPENROUTER_API_KEY</code> → <i>Save</i> (передеплой).</li>
+  <li>Ограничения бесплатного тарифа: сервис «засыпает» после ~15 мин простоя (первый запрос ~30–60 с); файловая система эфемерная — SQLite-файл сбрасывается при редеплое (для постоянных данных нужна внешняя БД через <code>DATABASE_URL</code>); <code>PORT</code> Render задаёт сам, приложение его подхватывает.</li>
+</ul>
+
+<h3>12. Обоснование выбора технологий</h3>
+<table>
+  <tr><th>Требование</th><th>Реализация</th></tr>
+  <tr><td>Простой и быстрый MVP</td><td>Монолит, одна встроенная БД (SQLite), статический фронтенд без сборки, минимум зависимостей.</td></tr>
+  <tr><td>Понимание свободного текста на русском</td><td>LLM <code>openai/gpt-5-nano</code> через OpenRouter; промпты на русском, формат «только JSON»; нормализация дат через <code>dateparser</code>.</td></tr>
+  <tr><td>Предсказуемое планирование кампаний</td><td>Детерминированное разбиение по шаблонам (формулы на % бюджета и доле срока), LLM — только когда шаблон не подходит.</td></tr>
+  <tr><td>Контекстные ответы по кампаниям</td><td>В Q&amp;A-промпт подмешивается актуальное состояние всех кампаний (включая прогресс и статусы) и последние реплики диалога — модель видит и факты, и тред переписки.</td></tr>
+  <tr><td>Отслеживание прогресса</td><td>Поля <code>completed_at</code> + авто-пересчёт статуса кампании по подзадачам; UI с чекбоксами и бейджами.</td></tr>
+  <tr><td>Память диалога</td><td>Отдельная таблица <code>chat_messages</code>, history-аware <code>answer_question</code>, восстановление переписки в UI при логине.</td></tr>
+  <tr><td>Асинхронность и масштабируемость кода</td><td>FastAPI + Uvicorn, async SQLAlchemy / <code>aiosqlite</code>, async HTTP-клиент <code>aiohttp</code>.</td></tr>
+  <tr><td>Лёгкий деплой</td><td>Dockerfile + <code>render.yaml</code>, health-check, переменные окружения, бесплатный тариф Render.</td></tr>
+  <tr><td>Без привязки к Telegram</td><td>Бизнес-логика вынесена в <code>core/service.py</code>; веб-слой и (legacy) Telegram-бот — лишь транспорт.</td></tr>
+</table>
+
+<h3>13. Известные ограничения и компромиссы</h3>
+<ul>
+  <li><b>Зависимость от внешнего LLM</b>: без сети/ключа OpenRouter ключевые сценарии (разбор кампании, Q&amp;A) недоступны; на ошибку — HTTP 502.</li>
+  <li><b>SQLite</b>: рассчитан на десятки–сотни записей и один процесс; для нагрузки/нескольких воркеров нужна внешняя СУБД.</li>
+  <li><b>Эфемерное хранилище на Render</b>: данные сбрасываются при редеплое (бесплатный тариф) — включая историю диалога.</li>
+  <li><b>Аутентификации нет</b>: «логин» — это только имя+роль в браузере; данные общие для всех пользователей, история диалога разделена лишь по имени.</li>
+  <li><b>Качество разбора</b> зависит от формулировки сообщения и поведения модели; есть страховки (уточняющий диалог, дефолтная одна подзадача), но не гарантируют идеальный результат.</li>
+  <li><b>Напоминания</b> реализованы как запрос «что сделать сегодня» (<code>/api/reminders/today</code>), а не как push — нет планировщика рассылок.</li>
+  <li><b>Память диалога — без summarization</b>: в контекст LLM подмешиваются только последние 10 реплик. Для длинных диалогов более старый контекст забывается.</li>
+</ul>
+
+<h3>14. Возможные улучшения (без смены стека)</h3>
+<ul>
+  <li>Вынести <code>DATABASE_URL</code> в окружение и перейти на PostgreSQL для постоянного хранения и масштабирования.</li>
+  <li>Добавить аутентификацию пользователей и разграничение доступа к кампаниям и истории диалога.</li>
+  <li>Кэшировать ответы LLM (например, классификацию и Q&amp;A по неизменному контексту).</li>
+  <li>Стриминг ответа LLM в веб-чат (Server-Sent Events / WebSocket).</li>
+  <li>Полноценный планировщик напоминаний (фоновая задача + уведомления) с учётом отметок выполнения.</li>
+  <li>Сжатие старой истории диалога через LLM-summarization при росте переписки.</li>
+  <li>Тесты на бизнес-логику разбиения, слияния pending-кампаний и авто-пересчёта статусов.</li>
+</ul>
+
+</body>
+</html>

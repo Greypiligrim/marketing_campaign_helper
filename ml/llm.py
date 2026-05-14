@@ -216,15 +216,30 @@ class NemotronLLM:
             logger.error(f"decompose_task_llm failed: {e}", exc_info=True)
             raise
 
-    async def answer_question(self, question: str, campaigns_context: str) -> str:
+    async def answer_question(
+        self,
+        question: str,
+        campaigns_context: str,
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
+        """Отвечает на вопрос с учётом контекста кампаний и истории диалога.
+
+        ``history`` — список реплик ``[{"role": "user"|"assistant", "content": str}, ...]``
+        в хронологическом порядке. Последняя реплика пользователя из истории НЕ дублирует
+        текущий ``question`` — она уже сохранена выше по стеку.
+        """
         try:
-            prompt_text = prompts.QA_PROMPT.format(
-                campaigns_context=campaigns_context,
-                question=question,
-            )
+            system_text = prompts.QA_SYSTEM.format(campaigns_context=campaigns_context)
+            messages: List[Dict[str, str]] = [{"role": "system", "content": system_text}]
+            for m in (history or [])[-12:]:
+                role = m.get("role")
+                content = (m.get("content") or "").strip()
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+            messages.append({"role": "user", "content": question})
             payload = {
                 "model": self.model,
-                "messages": [{"role": "user", "content": prompt_text}],
+                "messages": messages,
                 "temperature": 0.2,
             }
             resp = await self._post(payload)

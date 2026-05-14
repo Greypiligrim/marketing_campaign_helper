@@ -112,6 +112,10 @@ class UserIn(BaseModel):
     role: Optional[str] = Field(default=None, max_length=100)
 
 
+class CompletedFlag(BaseModel):
+    completed: bool
+
+
 async def _register_user_safely(name: Optional[str], role: Optional[str]) -> None:
     """Регистрирует участника чата, не роняя запрос при ошибке."""
     if not (name or "").strip():
@@ -125,10 +129,25 @@ async def _register_user_safely(name: Optional[str], role: Optional[str]) -> Non
 # --------------------------------------------------------------------------- #
 # Чат-эндпоинт (основной интерфейс вместо Telegram)
 # --------------------------------------------------------------------------- #
+def _assistant_summary(resp: ChatResponse) -> str:
+    """Готовит текст ответа бота для записи в историю диалога."""
+    if resp.answer:
+        return resp.answer
+    if resp.type == "campaign" and resp.preview:
+        p = resp.preview
+        return (
+            f"Подготовил кампанию «{p.get('campaign_name') or '—'}». "
+            f"Дедлайн: {p.get('deadline') or '—'}, бюджет: {p.get('budget_rub') or '—'} ₽."
+        )
+    return ""
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     text = req.message.strip()
     await _register_user_safely(req.user_name, req.user_role)
+    await service.save_chat_message(req.user_name, "user", text)
+
     try:
         msg_type = await service.classify_message(text)
     except Exception as e:
@@ -137,14 +156,20 @@ async def chat(req: ChatRequest) -> ChatResponse:
 
     if msg_type == "question":
         try:
-            answer = await service.answer_question(text)
+            history = await service.load_chat_history(
+                req.user_name, limit=service.CHAT_HISTORY_FOR_LLM + 1
+            )
+            history = [m for m in history if not (m["role"] == "user" and m["content"] == text)][-service.CHAT_HISTORY_FOR_LLM:]
+            answer = await service.answer_question(text, history=history)
         except Exception as e:
             logger.error(f"answer error: {e}", exc_info=True)
             raise HTTPException(status_code=502, detail="Не удалось ответить на вопрос.")
-        return ChatResponse(type="question", answer=answer)
+        resp = ChatResponse(type="question", answer=answer)
+        await service.save_chat_message(req.user_name, "assistant", _assistant_summary(resp))
+        return resp
 
     if msg_type == "other":
-        return ChatResponse(
+        resp = ChatResponse(
             type="other",
             answer=(
                 "👋 Я сервис для управления маркетинговыми кампаниями.\n"
@@ -152,6 +177,8 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 "или задайте вопрос о существующих кампаниях."
             ),
         )
+        await service.save_chat_message(req.user_name, "assistant", _assistant_summary(resp))
+        return resp
 
     # campaign
     try:
@@ -164,7 +191,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     pending_id = await service.create_pending(parsed)
     missing = service.missing_campaign_fields(parsed)
     if missing:
-        return ChatResponse(
+        resp = ChatResponse(
             type="clarify",
             pending_id=pending_id,
             preview=parsed,
@@ -175,7 +202,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
                 + ".\nОтправьте недостающие данные сообщением — я их добавлю."
             ),
         )
-    return ChatResponse(type="campaign", pending_id=pending_id, preview=parsed)
+    else:
+        resp = ChatResponse(type="campaign", pending_id=pending_id, preview=parsed)
+    await service.save_chat_message(req.user_name, "assistant", _assistant_summary(resp))
+    return resp
 
 
 @app.post("/api/campaigns/confirm")
@@ -197,6 +227,33 @@ async def confirm_campaign(req: ConfirmRequest) -> Dict[str, Any]:
     return {"campaign": campaign}
 
 
+@app.patch("/api/campaigns/{name}/subtasks/{subtask_id}")
+async def patch_subtask(name: str, subtask_id: int, body: CompletedFlag) -> Dict[str, Any]:
+    try:
+        return await service.set_subtask_completed(name, subtask_id, body.completed)
+    except service.CampaignError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.patch("/api/campaigns/{name}/completed")
+async def patch_campaign_completed(name: str, body: CompletedFlag) -> Dict[str, Any]:
+    try:
+        return await service.set_campaign_completed(name, body.completed)
+    except service.CampaignError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/chat/history")
+async def chat_history(user_name: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    return await service.load_chat_history(user_name, limit=limit)
+
+
+@app.delete("/api/chat/history")
+async def chat_history_clear(user_name: Optional[str] = None) -> Dict[str, int]:
+    removed = await service.clear_chat_history(user_name)
+    return {"removed": removed}
+
+
 @app.post("/api/campaigns/refine", response_model=ChatResponse)
 async def refine_campaign(req: RefineRequest) -> ChatResponse:
     """Дозаполняет ожидающую кампанию данными из нового сообщения пользователя.
@@ -207,6 +264,8 @@ async def refine_campaign(req: RefineRequest) -> ChatResponse:
     base = await service.get_pending(req.pending_id)
     if base is None:
         raise HTTPException(status_code=404, detail="Данные кампании не найдены или устарели.")
+
+    await service.save_chat_message(req.user_name, "user", req.message)
 
     try:
         extra = await service.parse_campaign(req.message, user_display=_format_user(req.user_name, req.user_role))
@@ -219,14 +278,17 @@ async def refine_campaign(req: RefineRequest) -> ChatResponse:
 
     missing = service.missing_campaign_fields(merged)
     if missing:
-        return ChatResponse(
+        resp = ChatResponse(
             type="clarify",
             pending_id=req.pending_id,
             preview=merged,
             missing=missing,
             answer="Записал. Осталось уточнить: " + ", ".join(missing) + ".",
         )
-    return ChatResponse(type="campaign", pending_id=req.pending_id, preview=merged)
+    else:
+        resp = ChatResponse(type="campaign", pending_id=req.pending_id, preview=merged)
+    await service.save_chat_message(req.user_name, "assistant", _assistant_summary(resp))
+    return resp
 
 
 @app.post("/api/campaigns/cancel")

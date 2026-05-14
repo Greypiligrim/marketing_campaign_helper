@@ -19,6 +19,7 @@ class Campaign(Base):
     chat_id = Column(Integer, nullable=True)
     created_by = Column(String(255), nullable=True)  # Кто создал: "Имя (Роль)"
     template_used = Column(String(255), nullable=True)  # Имя применённого шаблона, если был
+    completed_at = Column(DateTime, nullable=True)  # Когда кампания завершена (null = в работе)
 
     subtasks = relationship("Subtask", back_populates="campaign", cascade="all, delete-orphan")
 
@@ -34,6 +35,7 @@ class Subtask(Base):
     execution_days = Column(Integer, nullable=False)  # Срок выполнения в днях (целое число)
     deadline = Column(DateTime, nullable=False)  # Дата дедлайна подзадачи
     reminder_sent = Column(Integer, default=0)  # 0 = не отправлено, 1 = отправлено
+    completed_at = Column(DateTime, nullable=True)  # Когда подзадача отмечена выполненной
 
     campaign = relationship("Campaign", back_populates="subtasks")
 
@@ -80,6 +82,21 @@ class ChatUser(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ChatMessage(Base):
+    """Сообщение из чата — для памяти диалога.
+
+    Сохраняются и пользовательские реплики, и ответы бота, чтобы LLM мог
+    учитывать контекст переписки при ответе на вопросы.
+    """
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True)
+    user_name = Column(String(255), nullable=True, index=True)  # ключ диалога (имя или пусто)
+    role = Column(String(16), nullable=False)  # "user" | "assistant"
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
 class PendingCampaign(Base):
     """Распарсенная LLM, но ещё не подтверждённая кампания.
 
@@ -122,6 +139,12 @@ def _migrate_sqlite(conn) -> None:
         conn.exec_driver_sql("ALTER TABLE campaigns ADD COLUMN created_by VARCHAR(255)")
     if "template_used" not in campaigns_cols:
         conn.exec_driver_sql("ALTER TABLE campaigns ADD COLUMN template_used VARCHAR(255)")
+    if "completed_at" not in campaigns_cols:
+        conn.exec_driver_sql("ALTER TABLE campaigns ADD COLUMN completed_at DATETIME")
+
+    subtasks_cols = _columns("subtasks")
+    if "completed_at" not in subtasks_cols:
+        conn.exec_driver_sql("ALTER TABLE subtasks ADD COLUMN completed_at DATETIME")
 
 
 async def create_tables() -> None:
